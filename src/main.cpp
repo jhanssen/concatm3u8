@@ -75,7 +75,6 @@ int main(int argc, char** argv)
         }
         const std::string suburi = concat.base + concat.parts[cur];
         //Log(Log::Info) << "fetching" << suburi;
-        fetch = net::Fetch::create();
         fetch->fetch(suburi).then([&downloadNext, cur](std::shared_ptr<buffer::Buffer>&& buffer) -> void {
             Log(Log::Info) << "downloaded" << buffer->size() << (cur + 1) << "/" << concat.parts.size();
             fwrite(buffer->data(), buffer->size(), 1, concat.file);
