@@ -43,6 +43,10 @@ int main(int argc, char** argv)
         Log(Log::Error) << "no output file name";
         return 1;
     }
+    bool hardBase = true;
+    if (args.has<bool>("hard")) {
+        hardBase = args.value<bool>("hard");
+    }
 
     const auto url = args.value<std::string>("url");
     const auto outputfn = args.value<std::string>("output");
@@ -55,11 +59,26 @@ int main(int argc, char** argv)
 
     std::shared_ptr<event::Loop> loop = event::Loop::create();
 
-    const auto base = url.rfind('/');
-    if (base == std::string::npos) {
-        Log(Log::Error) << "no uri base";
+    if (!hardBase) {
+        const auto base = url.rfind('/');
+        if (base == std::string::npos) {
+            Log(Log::Error) << "no uri base";
+        }
+        concat.base = url.substr(0, base + 1);
+    } else {
+        // first, find //
+        auto base = url.find("://");
+        if (base == std::string::npos) {
+            Log(Log::Error) << "no uri base";
+        } else {
+            base = url.find("/", base + 4);
+            if (base == std::string::npos) {
+                Log(Log::Error) << "no uri base";
+            } else {
+                concat.base = url.substr(0, base + 1);
+            }
+        }
     }
-    concat.base = url.substr(0, base + 1);
     Log(Log::Info) << "uri base" << concat.base;
 
     auto fetch = net::Fetch::create();
@@ -73,7 +92,12 @@ int main(int argc, char** argv)
             loop->exit();
             return;
         }
-        const std::string suburi = concat.base + concat.parts[cur];
+        std::string suburi;
+        if (concat.parts[cur].find("://") != std::string::npos) {
+            suburi = concat.parts[cur];
+        } else {
+            suburi = concat.base + concat.parts[cur];
+        }
         //Log(Log::Info) << "fetching" << suburi;
         fetch->fetch(suburi).then([&downloadNext, cur](std::shared_ptr<buffer::Buffer>&& buffer) -> void {
             Log(Log::Info) << "downloaded" << buffer->size() << (cur + 1) << "/" << concat.parts.size();
