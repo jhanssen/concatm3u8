@@ -9,7 +9,7 @@ using namespace reckoning::log;
 
 struct Concat
 {
-    std::string base;
+    std::string base, hardBase;
     std::vector<std::string> parts;
     FILE* file;
 } concat;
@@ -43,9 +43,11 @@ int main(int argc, char** argv)
         Log(Log::Error) << "no output file name";
         return 1;
     }
+    bool hardSet = false;
     bool hardBase = true;
     if (args.has<bool>("hard")) {
         hardBase = args.value<bool>("hard");
+        hardSet = true;
     }
 
     const auto url = args.value<std::string>("url");
@@ -59,13 +61,14 @@ int main(int argc, char** argv)
 
     std::shared_ptr<event::Loop> loop = event::Loop::create();
 
-    if (!hardBase) {
+    if (!hardSet || !hardBase) {
         const auto base = url.rfind('/');
         if (base == std::string::npos) {
             Log(Log::Error) << "no uri base";
         }
         concat.base = url.substr(0, base + 1);
-    } else {
+    }
+    if (!hardSet || hardBase) {
         // first, find //
         auto base = url.find("://");
         if (base == std::string::npos) {
@@ -75,7 +78,9 @@ int main(int argc, char** argv)
             if (base == std::string::npos) {
                 Log(Log::Error) << "no uri base";
             } else {
-                concat.base = url.substr(0, base + 1);
+                concat.hardBase = url.substr(0, base + 1);
+                if (hardSet)
+                    concat.base = url.substr(0, base + 1);
             }
         }
     }
@@ -84,7 +89,7 @@ int main(int argc, char** argv)
     auto fetch = net::Fetch::create();
     std::function<void(uint32_t)> downloadNext;
 
-    downloadNext = [&fetch, &downloadNext, &loop](uint32_t cur) {
+    downloadNext = [hardSet, &fetch, &downloadNext, &loop](uint32_t cur) {
         if (cur >= concat.parts.size()) {
             // done
             Log(Log::Info) << "done";
@@ -96,7 +101,11 @@ int main(int argc, char** argv)
         if (concat.parts[cur].find("://") != std::string::npos) {
             suburi = concat.parts[cur];
         } else {
-            suburi = concat.base + concat.parts[cur];
+            if (!hardSet && !concat.parts[cur].empty() && concat.parts[cur][0] == '/') {
+                suburi = concat.hardBase + concat.parts[cur];
+            } else {
+                suburi = concat.base + concat.parts[cur];
+            }
         }
         //Log(Log::Info) << "fetching" << suburi;
         fetch->fetch(suburi).then([&downloadNext, cur](std::shared_ptr<buffer::Buffer>&& buffer) -> void {
