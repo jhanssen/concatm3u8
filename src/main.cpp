@@ -3,6 +3,7 @@
 #include <event/Loop.h>
 #include <net/Fetch.h>
 #include <log/Log.h>
+#include <zlib.h>
 
 using namespace reckoning;
 using namespace reckoning::log;
@@ -13,6 +14,64 @@ struct Concat
     std::vector<std::string> parts;
     FILE* file;
 } concat;
+
+static inline bool isGzip(const std::shared_ptr<buffer::Buffer>& buf)
+{
+    if (!buf || buf->size() < 10)
+        return false;
+    return buf->data()[0] == 0x1f && buf->data()[1] == 0x8b;
+}
+
+static inline std::shared_ptr<buffer::Buffer> decompressGzip(const std::shared_ptr<buffer::Buffer>& gzip)
+{
+    z_stream strm;
+    strm.zalloc = Z_NULL;
+    strm.zfree = Z_NULL;
+    strm.opaque = Z_NULL;
+    strm.next_in = Z_NULL;
+    strm.avail_in = 0;
+    if (inflateInit2(&strm, 15 | 32)) {
+        Log(Log::Error) << "Unable to initialize gzip";
+        return {};
+    }
+
+    enum { BufSiz = 0x4000 };
+    uint8_t out[BufSiz];
+
+    strm.next_in = gzip->data();
+    strm.avail_in = gzip->size();
+
+    std::vector<uint8_t> decomp;
+    size_t off = 0;
+    int status;
+
+    do {
+        strm.avail_out = BufSiz;
+        strm.next_out = out;
+
+        status = inflate(&strm, Z_NO_FLUSH);
+        switch (status) {
+        case Z_OK:
+        case Z_STREAM_END:
+        case Z_BUF_ERROR:
+            break;
+        default:
+            inflateEnd(&strm);
+            Log(Log::Error) << "inflate error" << status;
+            return {};
+        }
+
+        off = decomp.size();
+        decomp.resize(decomp.size() + (BufSiz - strm.avail_out));
+        memcpy(decomp.data() + off, out, BufSiz - strm.avail_out);
+    } while (strm.avail_out == 0);
+
+    inflateEnd(&strm);
+
+    auto ret = buffer::Buffer::create(decomp.size());
+    ret->assign(decomp.data(), decomp.size());
+    return ret;
+}
 
 int main(int argc, char** argv)
 {
@@ -117,6 +176,8 @@ int main(int argc, char** argv)
 
     fetch->fetch(url).then([&downloadNext](std::shared_ptr<buffer::Buffer>&& buffer) -> void {
         // parse buffer, all lines that doesn't start with a '#' is go
+        if (isGzip(buffer))
+            buffer = decompressGzip(buffer);
         const char* data = reinterpret_cast<const char*>(buffer->data());
         size_t off = 0;
         const size_t max = buffer->size();
